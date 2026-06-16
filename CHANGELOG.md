@@ -4,6 +4,10 @@ Adheres to [Semantic Versioning](http://semver.org/).
 
 ---
 
+## 2.1.0 (6-16-2026)
+
+* Xcode 26.4 compiler errors (#5)
+
 ## 2.0.0 (6-6-2025)
 
 * Adds Swift Package Manager support and removes Cocoapods (deprecated)
