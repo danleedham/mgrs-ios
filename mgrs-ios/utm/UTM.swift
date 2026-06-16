@@ -81,27 +81,103 @@ public class UTM {
     }
     
     /**
-     * Convert to a point
+     * Code from: https://www.movable-type.co.uk/scripts/latlong-utm-mgrs.html translated into swift
+     * Converts UTM zone/easting/northing coordinate to latitude/longitude.
      *
-     * @return point
+     * Implements Karney’s method, using Krüger series to order n⁶, giving results accurate to 5nm
+     * for distances up to 3900km from the central meridian.
+     *
+     * @param   {Utm} utmCoord - UTM coordinate to be converted to latitude/longitude.
+     * @returns {LatLon} Latitude/longitude of supplied grid reference.
+     *
+     * @example
+     *   const grid = new Utm(31, 'N', 448251.795, 5411932.678);
+     *   const latlong = grid.toLatLon(); // 48°51′29.52″N, 002°17′40.20″E
      */
     public func toPoint() -> GridPoint {
+        let falseEasting = 500000.0, falseNorthing = 10000000.0;
+        let a = 6_378_137.0
+        let f = 1.0 / 298.257223563
+        //
+        let k0 = 0.9996; // UTM scale on the central meridian
 
-        var north = northing
-        if hemisphere == Hemisphere.SOUTH {
-            // Remove 10,000,000 meter offset used for southern hemisphere
-            north -= 10000000.0
+        let x = easting - falseEasting;                            // make x ± relative to central meridian
+        let y = hemisphere == .SOUTH ? northing - falseNorthing : northing; // make y ± relative to equator
+
+        // ---- from Karney 2011 Eq 15-22, 36:
+        
+        let e = sqrt(f*(2-f)); // eccentricity
+        let n = f / (2 - f);        // 3rd flattening
+        let n2 = n*n, n3 = n*n2, n4 = n*n3, n5 = n*n4, n6 = n*n5;
+
+        let A = a/(1+n) * (1 + 1/4*n2 + 1/64*n4 + 1/256*n6); // 2πA is the circumference of a meridian
+
+        let eta = x / (k0*A);
+        let xi = y / (k0*A);
+
+        let beta = [ 0, // note beta is one-based array (6th order Krüger expressions)
+                    1/2*n - 2/3*n2 + 37/96*n3 -    1/360*n4 -   81/512*n5 +    96199/604800*n6,
+                    1/48*n2 +  1/15*n3 - 437/1440*n4 +   46/105*n5 - 1118711/3870720*n6,
+                    17/480*n3 -   37/840*n4 - 209/4480*n5 +      5569/90720*n6,
+                    4397/161280*n4 -   11/504*n5 -  830251/7257600*n6,
+                    4583/161280*n5 -  108847/3991680*n6,
+                    20648693/638668800*n6 ];
+        
+        var xiPrime = xi;
+        for j in 1...6 {
+            let doubleJ = Double(j);
+            xiPrime -= beta[j] * sin(2*doubleJ*xi) * cosh(2*doubleJ*eta);
+        }
+        
+        var etaPrime = eta;
+        for j in 1...6 {
+            let doubleJ = Double(j);
+            etaPrime -= beta[j] * cos(2*doubleJ*xi) * sinh(2*doubleJ*eta);
+        }
+        
+        let sinhetaPrime = sinh(etaPrime);
+        let sinxiPrime = sin(xiPrime), cosxiPrime = cos(xiPrime);
+
+        let tauPrime = sinxiPrime / sqrt(sinhetaPrime*sinhetaPrime + cosxiPrime*cosxiPrime);
+
+        var deltataui: Double = Double.greatestFiniteMagnitude;
+        var taui = tauPrime;
+        repeat {
+            let sigmai = sinh(e*atanh(e*taui/sqrt(1+taui*taui)));
+            let tauiPrime = taui * sqrt(1+sigmai*sigmai) - sigmai * sqrt(1+taui*taui);
+            deltataui = (tauPrime - tauiPrime)/sqrt(1+tauiPrime*tauiPrime)
+            * (1 + (1-e*e)*taui*taui) / ((1-e*e)*sqrt(1+taui*taui));
+            taui += deltataui;
+        } while (abs(deltataui) > 1e-12); // using IEEE 754 deltataui -> 0 after 2-3 iterations
+        // note relatively large convergence test as deltataui toggles on ±1.12e-16 for eg 31 N 400000 5000000
+        let tau = taui;
+
+        let phi = atan(tau);
+
+        var lambda = atan2(sinhetaPrime, cosxiPrime);
+
+        // ---- convergence: Karney 2011 Eq 26, 27
+        
+        var p = 1.0;
+        for j in 1...6 {
+            let doubleJ = Double(j);
+            p -= 2*doubleJ*beta[j] * cos(2*doubleJ*xi) * cosh(2*doubleJ*eta);
+        }
+        var q = 0.0;
+        for j in 1...6 {
+            let doubleJ = Double(j);
+            q += 2*doubleJ*beta[j] * sin(2*doubleJ*xi) * sinh(2*doubleJ*eta);
         }
 
-        var latitude = (north/6366197.724/0.9996+(1+0.006739496742*pow(cos(north/6366197.724/0.9996),2)-0.006739496742*sin(north/6366197.724/0.9996)*cos(north/6366197.724/0.9996)*(atan(cos(atan(( exp((easting - 500000) / (0.9996*6399593.625/sqrt((1+0.006739496742*pow(cos(north/6366197.724/0.9996),2))))*(1-0.006739496742*pow((easting - 500000) / (0.9996*6399593.625/sqrt((1+0.006739496742*pow(cos(north/6366197.724/0.9996),2)))),2)/2*pow(cos(north/6366197.724/0.9996),2)/3))-exp(-(easting-500000)/(0.9996*6399593.625/sqrt((1+0.006739496742*pow(cos(north/6366197.724/0.9996),2))))*( 1 -  0.006739496742*pow((easting - 500000) / (0.9996*6399593.625/sqrt((1+0.006739496742*pow(cos(north/6366197.724/0.9996),2)))),2)/2*pow(cos(north/6366197.724/0.9996),2)/3)))/2/cos((north-0.9996*6399593.625*(north/6366197.724/0.9996-0.006739496742*3/4*(north/6366197.724/0.9996+sin(2*north/6366197.724/0.9996)/2)+pow(0.006739496742*3/4,2)*5/3*(3*(north/6366197.724/0.9996+sin(2*north/6366197.724/0.9996 )/2)+sin(2*north/6366197.724/0.9996)*pow(cos(north/6366197.724/0.9996),2))/4-pow(0.006739496742*3/4,3)*35/27*(5*(3*(north/6366197.724/0.9996+sin(2*north/6366197.724/0.9996)/2)+sin(2*north/6366197.724/0.9996)*pow(cos(north/6366197.724/0.9996),2))/4+sin(2*north/6366197.724/0.9996)*pow(cos(north/6366197.724/0.9996),2)*pow(cos(north/6366197.724/0.9996),2))/3))/(0.9996*6399593.625/sqrt((1+0.006739496742*pow(cos(north/6366197.724/0.9996),2))))*(1-0.006739496742*pow((easting-500000)/(0.9996*6399593.625/sqrt((1+0.006739496742*pow(cos(north/6366197.724/0.9996),2)))),2)/2*pow(cos(north/6366197.724/0.9996),2))+north/6366197.724/0.9996)))*tan((north-0.9996*6399593.625*(north/6366197.724/0.9996 - 0.006739496742*3/4*(north/6366197.724/0.9996+sin(2*north/6366197.724/0.9996)/2)+pow(0.006739496742*3/4,2)*5/3*(3*(north/6366197.724/0.9996+sin(2*north/6366197.724/0.9996)/2)+sin(2*north/6366197.724/0.9996 )*pow(cos(north/6366197.724/0.9996),2))/4-pow(0.006739496742*3/4,3)*35/27*(5*(3*(north/6366197.724/0.9996+sin(2*north/6366197.724/0.9996)/2)+sin(2*north/6366197.724/0.9996)*pow(cos(north/6366197.724/0.9996),2))/4+sin(2*north/6366197.724/0.9996)*pow(cos(north/6366197.724/0.9996),2)*pow(cos(north/6366197.724/0.9996),2))/3))/(0.9996*6399593.625/sqrt((1+0.006739496742*pow(cos(north/6366197.724/0.9996),2))))*(1-0.006739496742*pow((easting-500000)/(0.9996*6399593.625/sqrt((1+0.006739496742*pow(cos(north/6366197.724/0.9996),2)))),2)/2*pow(cos(north/6366197.724/0.9996),2))+north/6366197.724/0.9996))-north/6366197.724/0.9996)*3/2)*(atan(cos(atan((exp((easting-500000)/(0.9996*6399593.625/sqrt((1+0.006739496742*pow(cos(north/6366197.724/0.9996),2))))*(1-0.006739496742*pow((easting-500000)/(0.9996*6399593.625/sqrt((1+0.006739496742*pow(cos(north/6366197.724/0.9996),2)))),2)/2*pow(cos(north/6366197.724/0.9996),2)/3))-exp(-(easting-500000)/(0.9996*6399593.625/sqrt((1+0.006739496742*pow(cos(north/6366197.724/0.9996),2))))*(1-0.006739496742*pow((easting-500000)/(0.9996*6399593.625/sqrt((1+0.006739496742*pow(cos(north/6366197.724/0.9996),2)))),2)/2*pow(cos(north/6366197.724/0.9996),2)/3)))/2/cos((north-0.9996*6399593.625*(north/6366197.724/0.9996-0.006739496742*3/4*(north/6366197.724/0.9996+sin(2*north/6366197.724/0.9996)/2)+pow(0.006739496742*3/4,2)*5/3*(3*(north/6366197.724/0.9996+sin(2*north/6366197.724/0.9996)/2)+sin(2*north/6366197.724/0.9996)*pow(cos(north/6366197.724/0.9996),2))/4-pow(0.006739496742*3/4,3)*35/27*(5*(3*(north/6366197.724/0.9996+sin(2*north/6366197.724/0.9996)/2)+sin(2*north/6366197.724/0.9996)*pow(cos(north/6366197.724/0.9996),2))/4+sin(2*north/6366197.724/0.9996)*pow(cos(north/6366197.724/0.9996),2)*pow(cos(north/6366197.724/0.9996),2))/3))/(0.9996*6399593.625/sqrt((1+0.006739496742*pow(cos(north/6366197.724/0.9996),2))))*(1-0.006739496742*pow((easting-500000)/(0.9996*6399593.625/sqrt((1+0.006739496742*pow(cos(north/6366197.724/0.9996),2)))),2)/2*pow(cos(north/6366197.724/0.9996),2))+north/6366197.724/0.9996)))*tan((north-0.9996*6399593.625*(north/6366197.724/0.9996-0.006739496742*3/4*(north/6366197.724/0.9996+sin(2*north/6366197.724/0.9996)/2)+pow(0.006739496742*3/4,2)*5/3*(3*(north/6366197.724/0.9996+sin(2*north/6366197.724/0.9996)/2)+sin(2*north/6366197.724/0.9996)*pow(cos(north/6366197.724/0.9996),2))/4-pow(0.006739496742*3/4,3)*35/27*(5*(3*(north/6366197.724/0.9996+sin(2*north/6366197.724/0.9996)/2)+sin(2*north/6366197.724/0.9996)*pow(cos(north/6366197.724/0.9996),2))/4+sin(2*north/6366197.724/0.9996)*pow(cos(north/6366197.724/0.9996),2)*pow(cos(north/6366197.724/0.9996),2))/3))/(0.9996*6399593.625/sqrt((1+0.006739496742*pow(cos(north/6366197.724/0.9996),2))))*(1-0.006739496742*pow((easting-500000)/(0.9996*6399593.625/sqrt((1+0.006739496742*pow(cos(north/6366197.724/0.9996),2)))),2)/2*pow(cos(north/6366197.724/0.9996),2))+north/6366197.724/0.9996))-north/6366197.724/0.9996))*180/Double.pi
-        latitude = round(latitude * 10000000)
-        latitude = latitude / 10000000
-
-        var longitude = atan((exp((easting-500000)/(0.9996*6399593.625/sqrt((1+0.006739496742*pow(cos(north/6366197.724/0.9996),2))))*(1-0.006739496742*pow((easting-500000)/(0.9996*6399593.625/sqrt((1+0.006739496742*pow(cos(north/6366197.724/0.9996),2)))),2)/2*pow(cos(north/6366197.724/0.9996),2)/3))-exp(-(easting-500000)/(0.9996*6399593.625/sqrt((1+0.006739496742*pow(cos(north/6366197.724/0.9996),2))))*(1-0.006739496742*pow((easting-500000)/(0.9996*6399593.625/sqrt((1+0.006739496742*pow(cos(north/6366197.724/0.9996),2)))),2)/2*pow(cos(north/6366197.724/0.9996),2)/3)))/2/cos((north-0.9996*6399593.625*( north/6366197.724/0.9996-0.006739496742*3/4*(north/6366197.724/0.9996+sin(2*north/6366197.724/0.9996)/2)+pow(0.006739496742*3/4,2)*5/3*(3*(north/6366197.724/0.9996+sin(2*north/6366197.724/0.9996)/2)+sin(2*north/6366197.724/0.9996)*pow(cos(north/6366197.724/0.9996),2))/4-pow(0.006739496742*3/4,3)*35/27*(5*(3*(north/6366197.724/0.9996+sin(2*north/6366197.724/0.9996)/2)+sin(2*north/6366197.724/0.9996)*pow(cos(north/6366197.724/0.9996),2))/4+sin(2*north/6366197.724/0.9996)*pow(cos(north/6366197.724/0.9996),2)*pow(cos(north/6366197.724/0.9996),2))/3)) / (0.9996*6399593.625/sqrt((1+0.006739496742*pow(cos(north/6366197.724/0.9996),2))))*(1-0.006739496742*pow((easting-500000)/(0.9996*6399593.625/sqrt((1+0.006739496742*pow(cos(north/6366197.724/0.9996),2)))),2)/2*pow(cos(north/6366197.724/0.9996),2))+north/6366197.724/0.9996))*180/Double.pi+Double(zone)*6-183
-        longitude = round(longitude * 10000000)
-        longitude = longitude / 10000000
-
-        return GridPoint.degrees(longitude, latitude)
+        // ------------
+        
+        let lambda0 = ((Double(zone)-1)*6 - 180 + 3).toRadians; // longitude of central meridian
+        lambda += lambda0; // move lambda from zonal to global coordinates
+        
+        // round to reasonable precision
+        let lat = phi.degrees.roundTo(places: 14) // nm precision (1nm = 10^-14°)
+        let lon = lambda.degrees.roundTo(places: 14) // (strictly lat rounding should be phi⋅cosphi!)
+        return GridPoint.degrees(lon, lat)
     }
     
     /**
@@ -232,7 +308,7 @@ public class UTM {
      *            hemisphere
      * @return UTM
      */
-    public static func from(_ point: GridPoint, _ zone: Int, _ hemisphere: Hemisphere) -> UTM {
+    public static func fromOriginal(_ point: GridPoint, _ zone: Int, _ hemisphere: Hemisphere) -> UTM {
 
         let pointDegrees = point.toDegrees()
 
@@ -251,6 +327,125 @@ public class UTM {
         northing = round(northing * 100) * 0.01
 
         return UTM(zone, hemisphere, easting, northing)
+    }
+
+    /**
+     * Code from: https://www.movable-type.co.uk/scripts/latlong-utm-mgrs.html translated into swift
+     * Converts latitude/longitude to UTM coordinate.
+     *
+     * Implements Karney’s method, using Krüger series to order n⁶, giving results accurate to 5nm
+     * for distances up to 3900km from the central meridian.
+     *
+     * @param   {number} [zoneOverride] - Use specified zone rather than zone within which point lies;
+     *          note overriding the UTM zone has the potential to result in negative eastings, and
+     *          perverse results within Norway/Svalbard exceptions.
+     * @returns {Utm} UTM coordinate.
+     * @throws  {TypeError} Latitude outside UTM limits.
+     *
+     * @example
+     *   const latlong = new LatLon(48.8582, 2.2945);
+     *   const utmCoord = latlong.toUtm(); // 31 N 448252 5411933
+     */
+    public static func from(_ point: GridPoint, _ zoneOverride: Int, _ hemisphere: Hemisphere) -> UTM {
+        
+        let pointDegrees = point.toDegrees()
+        
+        let latitude = pointDegrees.latitude
+        let longitude = pointDegrees.longitude
+        
+        let falseEasting = 500000.0, falseNorthing = 10000000.0;
+
+        var zone = floor((longitude+180)/6) + 1; // longitudinal zone
+        var lambda0 = ((zone-1)*6 - 180 + 3).toRadians; // longitude of central meridian
+        
+        // ---- handle Norway/Svalbard exceptions
+        // grid zones are 8° tall; 0°N is offset 10 into latitude bands array
+        let mgrsLatBands = ["C","D","E","F","G","H","J","K","L","M","N","P","Q","R","S","T","U","V","W","X","X"]; // X is repeated for 80-84°N
+        let latBand = mgrsLatBands[Int(floor(latitude/8+10))];
+        // adjust zone & central meridian for Norway
+        if (zone == 31 && latBand == "V" && longitude >= 3) { zone += 1; lambda0 += (6).toRadians; }
+        // adjust zone & central meridian for Svalbard
+        if (zone==32 && latBand=="X" && longitude <  9) { zone -= 1; lambda0 -= (6).toRadians; }
+        if (zone==32 && latBand=="X" && longitude >= 9) { zone += 1; lambda0 += (6).toRadians; }
+        if (zone==34 && latBand=="X" && longitude < 21) { zone -= 1; lambda0 -= (6).toRadians; }
+        if (zone==34 && latBand=="X" && longitude >= 21) { zone += 1; lambda0 += (6).toRadians; }
+        if (zone==36 && latBand=="X" && longitude < 33) { zone -= 1; lambda0 -= (6).toRadians; }
+        if (zone==36 && latBand=="X" && longitude >= 33) { zone += 1; lambda0 += (6).toRadians; }
+
+        let phi = latitude.toRadians;      // latitude ± from equator
+        let lambda = longitude.toRadians - lambda0; // longitude ± from central meridian
+        
+        let a = 6_378_137.0
+        let f = 1.0 / 298.257223563
+        
+        let k0 = 0.9996; // UTM scale on the central meridian
+
+        // ---- easting, northing: Karney 2011 Eq 7-14, 29, 35:
+        
+        let e = sqrt(f*(2-f)); // eccentricity
+        let n = f / (2 - f);        // 3rd flattening
+        let n2 = n*n, n3 = n*n2, n4 = n*n3, n5 = n*n4, n6 = n*n5;
+
+        let coslambda = cos(lambda)
+        let sinlambda = sin(lambda)
+
+        let tau = tan(phi); // tau ≡ tanphi, tauʹ ≡ tanphiʹ; prime (ʹ) indicates angles on the conformal sphere
+        let sigma = sinh(e*atanh(e*tau/sqrt(1+tau*tau)));
+
+        let tauPrime = tau*sqrt(1+sigma*sigma) - sigma*sqrt(1+tau*tau);
+
+        let xiPrime = atan2(tauPrime, coslambda);
+        let etaPrime = asinh(sinlambda / sqrt(tauPrime*tauPrime + coslambda*coslambda));
+
+        let A = a/(1+n) * (1 + 1/4*n2 + 1/64*n4 + 1/256*n6); // 2πA is the circumference of a meridian
+
+        let alpha: [Double] = [ Double(0), // note α is one-based array (6th order Krüger expressions)
+                          Double(1/2*n - 2/3*n2 + 5/16*n3 +   41/180*n4 -     127/288*n5 +      7891/37800*n6),
+                          Double(13/48*n2 -  3/5*n3 + 557/1440*n4 +     281/630*n5 - 1983433/1935360*n6),
+                          Double(61/240*n3 -  103/140*n4 + 15061/26880*n5 +   167603/181440*n6),
+                          Double(49561/161280*n4 -     179/168*n5 + 6601661/7257600*n6),
+                          Double(34729/80640*n5 - 3418889/1995840*n6),
+                          Double(212378941/319334400*n6) ];
+        
+        var xi = xiPrime;
+        for j in 1...6 {
+            let doubleJ = Double(j);
+            xi += alpha[j] * sin(2.0*doubleJ*xiPrime) * cosh(2.0*doubleJ*etaPrime);
+        }
+        
+        var eta = etaPrime;
+        for j in 1...6 {
+            let doubleJ = Double(j);
+            eta += alpha[j] * cos(2*doubleJ*xiPrime) * sinh(2*doubleJ*etaPrime);
+        }
+        
+        var x = k0 * A * eta;
+        var y = k0 * A * xi;
+
+        // ---- convergence: Karney 2011 Eq 23, 24
+        
+        var pPrime = 1.0;
+        for j in 1...6 {
+            let doubleJ = Double(j);
+            pPrime += 2*doubleJ*alpha[j] * cos(2*doubleJ*xiPrime) * cosh(2*doubleJ*etaPrime);
+        }
+        var qPrime = 0.0;
+        for j in 1...6 {
+            let doubleJ = Double(j);
+            qPrime += 2*doubleJ*alpha[j] * sin(2*doubleJ*xiPrime) * sinh(2*doubleJ*etaPrime);
+        }
+
+        // ------------
+        
+        // shift x/y to false origins
+        x = x + falseEasting;             // make x relative to false easting
+        if (y < 0) {
+            y = y + falseNorthing; // make y in southern hemisphere relative to false northing
+        }
+        
+        x = floor(x)
+        y = floor(y)
+        return UTM(Int(zone), hemisphere, x, y)
     }
     
     /**
@@ -506,4 +701,18 @@ public class UTM {
         return from(longitude, latitude, unit, zone, hemisphere).format()
     }
     
+}
+
+extension Double {
+    var toRadians: Double { return self * .pi / 180 }
+    
+    var degrees: Double {
+        // The formula is: Radians = Degrees * pi / 180
+        return self * 180 / .pi
+    }
+    
+    func roundTo(places: Int) -> Double {
+        let divisor = pow(10.0, Double(places))
+        return (self * divisor).rounded() / divisor
+    }
 }

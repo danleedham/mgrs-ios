@@ -400,7 +400,6 @@ public class MGRS: Hashable {
         
         // Normalize the longitude if needed
         SFGeometryUtils.normalizeWGS84Geometry(pointDegrees)
-        
         let utm = UTM.from(pointDegrees)
 
         let bandLetter = GridZones.bandLetter(pointDegrees.latitude)
@@ -410,8 +409,11 @@ public class MGRS: Hashable {
         let rowLetter = rowLetter(utm)
 
         // truncate easting/northing to within 100km grid square
-        let easting = Int(utm.easting.truncatingRemainder(dividingBy: 100000))
-        let northing = Int(utm.northing.truncatingRemainder(dividingBy: 100000))
+//        let easting = Int(utm.easting.truncatingRemainder(dividingBy: 100000))
+//        let northing = Int(utm.northing.truncatingRemainder(dividingBy: 100000))
+        
+        let easting = Int(round(utm.easting).truncatingRemainder(dividingBy: 100000))
+        let northing = Int(round(utm.northing).truncatingRemainder(dividingBy: 100000))
         
         return MGRS(utm.zone, bandLetter, columnLetter, rowLetter,
                 easting, northing)
@@ -756,7 +758,7 @@ public class MGRS: Hashable {
         let intersectionNorthing = intersectionUTM.northing
 
         // One meter precision just inside the bounds
-        let boundsNorthing = ceil(intersectionNorthing)
+        let boundsNorthing = ceil(intersectionNorthing) + 1
 
         // Higher precision point just inside of the bounds
         let boundsPoint = UTM.point(zoneNumber, hemisphere, easting,

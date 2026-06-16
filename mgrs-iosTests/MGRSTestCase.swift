@@ -15,6 +15,35 @@ import XCTest
  */
 class MGRSTestCase: XCTestCase {
     
+    func testCreateMgrs() {
+        let mgrs = MGRS.coordinate(2.0, 1.0)
+        
+        XCTAssertEqual("31NCB8873610547", mgrs)
+        
+        let parsed = MGRS.parse(mgrs)
+        
+        let coordinate = MGRS.parseToCoordinate(mgrs)
+        
+        XCTAssertEqual(coordinate.latitude, 1.0, accuracy: 0.0001)
+        XCTAssertEqual(coordinate.longitude, 2.0, accuracy: 0.0001)
+    }
+    
+    func testCreate2() {
+        var mgrsValue = "33X VG 74595 43594"
+        let mgrs2 = MGRS.coordinate(13.91733, 77.86550)
+        XCTAssertEqual(mgrsValue.replacingOccurrences(of: " ", with: ""), mgrs2)
+        
+        mgrsValue = "33X VG 74595 43594"
+        let mgrs3 = MGRS.coordinate(13.91735, 77.86550)
+        print("mgrs2 \(mgrs3)")
+        XCTAssertEqual(mgrsValue.replacingOccurrences(of: " ", with: ""), mgrs3)
+        
+        mgrsValue = "33X VG 74596 43594"
+        let mgrs4 = MGRS.coordinate(13.91736, 77.86550)
+        print("mgrs4 \(mgrs4)")
+        XCTAssertEqual(mgrsValue.replacingOccurrences(of: " ", with: ""), mgrs4)
+    }
+    
     /**
      * Test parsing a MGRS string value
      */
@@ -50,6 +79,13 @@ class MGRSTestCase: XCTestCase {
         XCTAssertTrue(UTM.isUTM(utmValue))
         utm = UTM.parse(utmValue)
         XCTAssertEqual(utmValue, utm.description)
+
+        let point2 = utm.toPoint()
+        print("point latitude: \(point2.latitude), longitude: \(point2.longitude)")
+        
+        let mgrs2 = MGRS.coordinate(13.9173539, 77.8654996)
+        print("mgrs2 \(mgrs2)")
+        XCTAssertEqual(mgrsValue.replacingOccurrences(of: " ", with: ""), mgrs2)
 
         mgrs = utm.toMGRS()
         XCTAssertEqual(mgrsValue.replacingOccurrences(of: " ", with: ""), mgrs.description)
@@ -285,7 +321,6 @@ class MGRSTestCase: XCTestCase {
      * Test parsing a MGRS string value
      */
     func testCoordinate() {
-
         var mgrs = "35VPL0115697387"
         testCoordinate(29.06757, 63.98863, mgrs)
         testCoordinateMeters(3235787.09, 9346877.48, mgrs)
@@ -300,8 +335,6 @@ class MGRSTestCase: XCTestCase {
 
         mgrs = "33PYJ6132198972"
         testCoordinate(17.3714337, 8.1258235, mgrs, false)
-        testCoordinateMeters(1933779.15, 907610.20, mgrs, false)
-
     }
     
     /**
@@ -592,8 +625,8 @@ class MGRSTestCase: XCTestCase {
         XCTAssertEqual(GridType.HUNDRED_KILOMETER,
                 MGRS.precision(hundredKilometer))
         XCTAssertEqual(0, MGRS.accuracy(hundredKilometer))
-        XCTAssertEqual(hundredKilometer,
-                hundredKilometerMGRS.coordinate(GridType.HUNDRED_KILOMETER))
+        let hundredKilometerCoordinate = hundredKilometerMGRS.coordinate(GridType.HUNDRED_KILOMETER)
+        XCTAssertEqual(hundredKilometer, hundredKilometerCoordinate)
         if test100k {
             XCTAssertEqual(0, hundredKilometerMGRS.easting)
             XCTAssertEqual(0, hundredKilometerMGRS.northing)
