@@ -8,6 +8,7 @@ let package = Package(
     products: [
         .library(
             name: "MGRS",
+            type: .static,
             targets: ["MGRS"])
     ],
     dependencies: [
